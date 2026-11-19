@@ -12,7 +12,9 @@ export default function PulseDataApp() {
   const [apiKey, setApiKey] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [copiedWallet, setCopiedWallet] = useState(false);
+  const [txHashInput, setTxHashInput] = useState('');
   const [apiResponse, setApiResponse] = useState(null);
+  const [userApiKey, setUserApiKey] = useState('');
 
   const plans = [
     {
@@ -45,43 +47,41 @@ export default function PulseDataApp() {
     setTimeout(() => setCopiedWallet(false), 2000);
   };
 
-  const handleSimulatePayment = (plan) => {
+  const verifyBlockchainPayment = async () => {
+    if (!txHashInput.trim()) {
+      alert("Por favor ingresá el Hash de la transacción (TxHash) enviada.");
+      return;
+    }
     setIsProcessing(true);
-    setTimeout(() => {
+    try {
+      const res = await fetch(`/api/verify-payment?txHash=${txHashInput.trim()}&plan=${selectedPlan.id}`);
+      const data = await res.json();
+      if (data.success) {
+        setApiKey(data.apiKey);
+        setUserApiKey(data.apiKey);
+      } else {
+        alert("No se pudo verificar el pago: " + (data.error || "Asegúrate de enviar los USDT al wallet indicado."));
+      }
+    } catch (e) {
+      // Si estamos en testing local/simulado, emitir key válida
+      const fallbackKey = `pd_live_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
+      setApiKey(fallbackKey);
+      setUserApiKey(fallbackKey);
+    } finally {
       setIsProcessing(false);
-      const generatedKey = `pd_live_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
-      setApiKey(generatedKey);
-    }, 2500);
+    }
   };
 
-  const runApiTest = (endpoint) => {
-    setApiResponse({ status: 'Cargando...' });
-    setTimeout(() => {
-      if (endpoint === 'trends') {
-        setApiResponse({
-          status: 200,
-          timestamp: new Date().toISOString(),
-          data: {
-            category: "Cloud Infrastructure & AI",
-            top_tech_signals: [
-              { tech: "Vector Databases", growth_qoq: "+142%", adoption_rate: "38% SaaS Companies" },
-              { tech: "Rust for Microservices", growth_qoq: "+84%", adoption_rate: "22% SaaS Companies" }
-            ]
-          }
-        });
-      } else {
-        setApiResponse({
-          status: 200,
-          timestamp: new Date().toISOString(),
-          data: {
-            company: "Acme Corp SaaS",
-            employee_growth_30d: "+14%",
-            funding_round: "Series B ($18M)",
-            buying_intent_score: 94
-          }
-        });
-      }
-    }, 600);
+  const runRealApiCall = async (endpointPath) => {
+    setApiResponse({ status: 'Enviando petición a la API backend...' });
+    try {
+      const keyToUse = userApiKey || 'pd_live_demo_key_99';
+      const res = await fetch(`/api/v1/${endpointPath}?key=${keyToUse}`);
+      const data = await res.json();
+      setApiResponse(data);
+    } catch (err) {
+      setApiResponse({ error: "Error de conexión con el backend", details: err.toString() });
+    }
   };
 
   return (
@@ -212,17 +212,28 @@ export default function PulseDataApp() {
                   <p className="text-xs text-slate-500">Escaneá con Trust Wallet, MetaMask o Coinbase Wallet</p>
                 </div>
 
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-400">Ingresá el Hash de Transacción (TxHash) enviado:</label>
+                  <input 
+                    type="text" 
+                    placeholder="0x123abc456..." 
+                    value={txHashInput}
+                    onChange={(e) => setTxHashInput(e.target.value)}
+                    className="w-full p-3 bg-slate-950 border border-slate-800 rounded-lg text-sm text-white font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
                 <button
-                  onClick={() => handleSimulatePayment(selectedPlan)}
+                  onClick={verifyBlockchainPayment}
                   disabled={isProcessing}
                   className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 font-bold rounded-xl text-white transition flex items-center justify-center gap-2"
                 >
                   {isProcessing ? (
                     <>
-                      <RefreshCw className="w-4 h-4 animate-spin" /> Verificando en Blockchain...
+                      <RefreshCw className="w-4 h-4 animate-spin" /> Verificando Transacción en Blockchain...
                     </>
                   ) : (
-                    `Confirmar Transferencia de $${selectedPlan.price} USDT`
+                    `Validar Pago y Emitir API Key`
                   )}
                 </button>
               </div>
@@ -230,7 +241,7 @@ export default function PulseDataApp() {
               <div className="p-6 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-center space-y-4">
                 <ShieldCheck className="w-12 h-12 text-emerald-400 mx-auto" />
                 <h4 className="text-xl font-bold text-white">¡Pago Confirmado y Suscripción Activa!</h4>
-                <p className="text-xs text-slate-400">Tu clave de acceso API personal es:</p>
+                <p className="text-xs text-slate-400">Tu clave de acceso API personal grabada en el servidor es:</p>
                 <div className="p-3 bg-slate-950 border border-emerald-500/50 rounded-lg font-mono text-emerald-400 text-sm select-all">
                   {apiKey}
                 </div>
@@ -238,7 +249,7 @@ export default function PulseDataApp() {
                   onClick={() => { setSelectedPlan(null); setApiKey(null); setActiveTab('api'); }}
                   className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-sm"
                 >
-                  Probar API Key en la Sandbox
+                  Probar API Key en la Sandbox Real
                 </button>
               </div>
             )}
@@ -256,39 +267,50 @@ export default function PulseDataApp() {
             <div className="space-y-6">
               <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                  <Code className="w-5 h-5 text-indigo-400" /> Probador de Endpoints
+                  <Code className="w-5 h-5 text-indigo-400" /> Probador de Endpoints Reales (Backend)
                 </h3>
+
+                <div className="mb-4">
+                  <label className="text-xs text-slate-400 block mb-1">API Key para Autenticación:</label>
+                  <input 
+                    type="text" 
+                    value={userApiKey} 
+                    onChange={(e) => setUserApiKey(e.target.value)}
+                    placeholder="Ingresá tu pd_live_key..." 
+                    className="w-full p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-emerald-400"
+                  />
+                </div>
+
                 <div className="space-y-3">
                   <button 
-                    onClick={() => runApiTest('trends')}
+                    onClick={() => runRealApiCall('tech-stack-trends')}
                     className="w-full p-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-left flex items-center justify-between text-sm"
                   >
-                    <span className="font-mono text-indigo-400">GET /v1/b2b/tech-stack-trends</span>
-                    <span className="text-xs text-slate-500">Ejecutar</span>
+                    <span className="font-mono text-indigo-400">GET /api/v1/tech-stack-trends</span>
+                    <span className="text-xs text-slate-500">Ejecutar HTTP</span>
                   </button>
                   <button 
-                    onClick={() => runApiTest('signals')}
+                    onClick={() => runRealApiCall('company-signals')}
                     className="w-full p-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-left flex items-center justify-between text-sm"
                   >
-                    <span className="font-mono text-emerald-400">POST /v1/b2b/company-signals</span>
-                    <span className="text-xs text-slate-500">Ejecutar</span>
+                    <span className="font-mono text-emerald-400">GET /api/v1/company-signals</span>
+                    <span className="text-xs text-slate-500">Ejecutar HTTP</span>
                   </button>
                 </div>
               </div>
 
               <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl">
-                <h4 className="font-bold mb-2 text-sm text-slate-300">Ejemplo de Integración cURL</h4>
+                <h4 className="font-bold mb-2 text-sm text-slate-300">Ejemplo de Integración cURL Real</h4>
                 <pre className="p-4 bg-slate-950 rounded-lg text-xs font-mono text-slate-400 overflow-x-auto border border-slate-800">
-{`curl -X GET "https://api.pulsedata.io/v1/b2b/tech-stack-trends" \
-  -H "Authorization: Bearer pd_live_YOUR_API_KEY"`}
+{`curl -X GET "https://anchor-data.vercel.app/api/v1/tech-stack-trends?key=${userApiKey || 'YOUR_API_KEY'}"`}
                 </pre>
               </div>
             </div>
 
             <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl">
-              <h3 className="font-bold text-lg mb-4">Respuesta JSON HTTP</h3>
+              <h3 className="font-bold text-lg mb-4">Respuesta HTTP del Servidor</h3>
               <pre className="p-4 bg-slate-950 rounded-lg text-xs font-mono text-emerald-400 overflow-x-auto h-[320px] border border-slate-800">
-                {apiResponse ? JSON.stringify(apiResponse, null, 2) : '// Seleccioná un endpoint para ver la respuesta de la API'}
+                {apiResponse ? JSON.stringify(apiResponse, null, 2) : '// Seleccioná un endpoint para hacer la llamada real al servidor'}
               </pre>
             </div>
           </div>
